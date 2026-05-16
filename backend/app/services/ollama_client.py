@@ -12,7 +12,7 @@ class OllamaClient:
         self,
         base_url: str = "http://localhost:11434",
         model: str = "qwen2.5:0.5b",
-        timeout_seconds: int = 60,
+        timeout_seconds: int = 25,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -35,10 +35,10 @@ class OllamaClient:
                 timeout=self.timeout_seconds,
             )
             response.raise_for_status()
+        except requests.exceptions.Timeout as exc:
+            raise OllamaClientError("TravelSense AI took too long to respond.") from exc
         except requests.exceptions.RequestException as exc:
-            raise OllamaClientError(
-                "Could not reach Ollama. Make sure it is running on http://localhost:11434."
-            ) from exc
+            raise OllamaClientError("TravelSense AI could not respond right now.") from exc
 
         try:
             data = response.json()

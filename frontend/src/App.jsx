@@ -73,21 +73,27 @@ function App() {
                 ...messageItem,
                 content:
                   data.assistant_response ||
+                  data.reply ||
+                  data.message ||
                   "I can help you shape this trip. Tell me a little more.",
                 pending: false,
               }
             : messageItem,
         ),
       }));
-    } catch {
-      setError("TravelSense AI could not respond right now. Please try again in a moment.");
+    } catch (requestError) {
+      const friendlyMessage =
+        requestError?.message ||
+        "TravelSense AI could not respond right now. Please try again in a moment.";
+
+      setError(friendlyMessage);
       updateConversation(targetConversationId, (conversation) => ({
         ...conversation,
         messages: conversation.messages.map((messageItem) =>
           messageItem.id === assistantMessageId
             ? {
                 ...messageItem,
-                content: "I could not reach the planner just now. Please try again in a moment.",
+                content: friendlyMessage,
                 pending: false,
                 isError: true,
               }

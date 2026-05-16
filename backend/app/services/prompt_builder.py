@@ -9,7 +9,21 @@ TECHNICAL_REPLACEMENTS = {
     "qwen2.5": "TravelSense AI",
     "Qwen": "TravelSense AI",
     "qwen": "TravelSense AI",
+    "LLM": "assistant",
+    "backend": "service",
+    "API": "service",
+    "provider": "service",
+    "model": "assistant",
+    "dataset": "travel context",
+    "RAG": "travel context",
+    "promptbuilder": "assistant",
 }
+
+EMOJI_OK = "\u2705"
+EMOJI_TARGET = "\U0001f3af"
+EMOJI_ARROW = "\u27a1\ufe0f"
+EMOJI_BULB = "\U0001f4a1"
+EMOJI_WARN = "\u26a0\ufe0f"
 
 
 @dataclass(frozen=True)
@@ -52,10 +66,27 @@ def analyze_message(message: str) -> MessageAnalysis:
     )
 
 
-def build_travelsense_prompt(user_message: str) -> str:
+def build_travelsense_prompt(user_message: str, rag_context: str = "") -> str:
     """Build a focused TravelSense prompt for Ollama's generate endpoint."""
 
     analysis = analyze_message(user_message)
+    useful_context = (rag_context or "").strip()
+    french_rag_section = (
+        "\n\nUseful travel context:\n"
+        f"{useful_context}\n\n"
+        "Use this context if relevant, but do not mention datasets or sources. "
+        "Do not invent missing details. If the context is not enough, give a careful answer."
+        if useful_context
+        else ""
+    )
+    english_rag_section = (
+        "\n\nUseful travel context:\n"
+        f"{useful_context}\n\n"
+        "Use this context if relevant, but do not mention datasets or sources. "
+        "Do not invent missing details. If the context is not enough, give a careful answer."
+        if useful_context
+        else ""
+    )
     entity_lines = _format_entities(analysis.entities)
     missing_lines = _format_list(
         analysis.missing_context,
@@ -75,6 +106,8 @@ def build_travelsense_prompt(user_message: str) -> str:
         _critical_constraints(analysis),
         fallback="aucune" if analysis.language == "french" else "none",
     )
+    empathy_instruction = _empathy_instruction_for_emotion(analysis.emotion, analysis.language)
+    formatting_instruction = _formatting_style_instruction(analysis.language)
 
     if analysis.language == "french":
         return f"""
@@ -94,7 +127,13 @@ Contexte détecté :
 - informations manquantes :
 {missing_lines}
 - contraintes importantes :
-{constraints}
+{constraints}{french_rag_section}
+
+Adaptation emotionnelle :
+{empathy_instruction}
+
+Style de formatage :
+{formatting_instruction}
 
 Règles de réponse :
 - Réponds en français.
@@ -145,7 +184,13 @@ Detected context:
 - missing information:
 {missing_lines}
 - critical constraints:
-{constraints}
+{constraints}{english_rag_section}
+
+Emotional adaptation:
+{empathy_instruction}
+
+Formatting style:
+{formatting_instruction}
 
 Response rules:
 - Answer in the same language as the user's message.
@@ -193,6 +238,13 @@ def clean_assistant_response(response: str) -> str:
         cleaned = cleaned.replace(original, replacement)
 
     cleaned = re.sub(
+        r"\b(ollama|qwen|llm|backend|api|provider|model|dataset|rag|promptbuilder)\b",
+        lambda match: TECHNICAL_REPLACEMENTS.get(match.group(1), "TravelSense AI"),
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    cleaned = re.sub(
         r"^\s*(Réponse TravelSense AI:|Reponse TravelSense AI:|TravelSense AI response:|Assistant:)\s*",
         "",
         cleaned,
@@ -229,13 +281,21 @@ def _has_structure(response: str) -> bool:
 
     useful_headings = [
         "Mon choix",
+        "🎯 Mon choix",
         "Prochaine étape",
+        "➡️ Prochaine étape",
         "Mes 3 meilleures options",
+        "✅ Mes meilleures options",
         "My pick",
+        "🎯 My pick",
         "Next step",
+        "➡️ Next step",
         "Best 3 options",
+        "✅ Best options",
         "Itinéraire proposé",
+        "✅ Itinéraire proposé",
         "Suggested itinerary",
+        "✅ Suggested itinerary",
     ]
     if any(heading.lower() in response.lower() for heading in useful_headings):
         return True
@@ -356,8 +416,8 @@ def _fallback_response(analysis: MessageAnalysis) -> str:
 def _fallback_response_en(analysis: MessageAnalysis) -> str:
     if analysis.intent == "destination_recommendation":
         return (
-            "No worries, we can narrow this down to 3 clear options.\n\n"
-            "Best 3 options\n\n"
+            "No worries, we can narrow this down clearly.\n\n"
+            "✅ Best options\n\n"
             "1. Lisbon, Portugal\n"
             "Why: cultural, walkable, and easy to organize on a medium budget.\n"
             "Budget: medium\n"
@@ -370,9 +430,9 @@ def _fallback_response_en(analysis: MessageAnalysis) -> str:
             "Why: museums, ruins, and architecture.\n"
             "Budget: medium to high\n"
             "Pace: rich but more intense.\n\n"
-            "My pick\n"
+            "🎯 My pick\n"
             "Lisbon, if you want a cultural trip that feels clear and simple to plan.\n\n"
-            "Next step\n"
+            "➡️ Next step\n"
             "Do you prefer museums, local food, or historic streets?"
         )
 
@@ -384,23 +444,23 @@ def _fallback_response_en(analysis: MessageAnalysis) -> str:
     if analysis.intent == "destination_comparison":
         return (
             "Here is the short version so you can choose calmly.\n\n"
-            "Comparison\n"
+            "✅ Comparison\n"
             "1. Rome - Strengths: museums, ruins, and classic history. Limitation: busier and pricier. Best for: deep culture.\n"
             "2. Lisbon - Strengths: walkable, warm, and easier on budget. Limitation: fewer major ancient sites. Best for: relaxed culture.\n\n"
-            "Recommendation\n"
+            "🎯 Recommendation\n"
             "Choose Rome for iconic history, or Lisbon for a simpler and lighter trip.\n\n"
-            "Next step\n"
+            "➡️ Next step\n"
             "What matters more to you: budget, museums, or relaxed pacing?"
         )
 
     if analysis.intent == "budget_optimization":
         return (
             "You can keep the trip comfortable without overspending.\n\n"
-            "Budget plan\n"
+            "✅ Budget plan\n"
             "- Save on: public transport, simple local meals, and free viewpoints.\n"
             "- Do not over-save on: location and late-night transport.\n"
             "- Priority: book a well-located stay and limit paid attractions.\n\n"
-            "Next step\n"
+            "➡️ Next step\n"
             "Share your destination and daily budget, and I will make it more precise."
         )
 
@@ -408,20 +468,23 @@ def _fallback_response_en(analysis: MessageAnalysis) -> str:
         destination = analysis.entities.get("destination", "your destination")
         return (
             f"It is smart to check safety before choosing {destination}.\n\n"
-            "What to check\n"
+            "⚠️ Points to check\n"
             "- Stay in central, well-reviewed areas and avoid isolated streets late at night.\n"
             "- Check recent traveler feedback and local transport advice.\n"
             "- Check official and current sources before deciding.\n\n"
-            "Next step\n"
+            "💡 Tip\n"
+            "Use official/current sources for final safety, visa, and schedule decisions.\n\n"
+            "➡️ Next step\n"
             "Tell me if you are traveling solo, as a couple, or with family."
         )
 
     return (
         "I can help you make this simpler.\n"
+        "✅ To start\n"
         "- Share your destination or travel style.\n"
         "- Add your duration and budget.\n"
         "- I will turn it into a clear plan.\n\n"
-        "Next step\n"
+        "➡️ Next step\n"
         "What destination are you considering?"
     )
 
@@ -430,7 +493,7 @@ def _fallback_response_fr(analysis: MessageAnalysis) -> str:
     if analysis.intent == "destination_recommendation":
         return (
             "Pas de panique, on va réduire le choix à 3 options claires.\n\n"
-            "Mes 3 meilleures options\n\n"
+            "✅ Mes meilleures options\n\n"
             "1. Lisbonne, Portugal\n"
             "Pourquoi : culturelle, agréable à pied et adaptée à un budget moyen.\n"
             "Budget : moyen\n"
@@ -443,9 +506,9 @@ def _fallback_response_fr(analysis: MessageAnalysis) -> str:
             "Pourquoi : musées, ruines et architecture.\n"
             "Budget : moyen à élevé\n"
             "Rythme : riche mais plus intense.\n\n"
-            "Mon choix\n"
+            "🎯 Mon choix\n"
             "Lisbonne, si tu veux un voyage culturel clair et simple à organiser.\n\n"
-            "Prochaine étape\n"
+            "➡️ Prochaine étape\n"
             "Tu préfères musées, cuisine locale ou quartiers historiques ?"
         )
 
@@ -457,23 +520,23 @@ def _fallback_response_fr(analysis: MessageAnalysis) -> str:
     if analysis.intent == "destination_comparison":
         return (
             "Voici la version courte pour choisir calmement.\n\n"
-            "Comparaison\n"
+            "✅ Comparaison\n"
             "1. Rome - Forces : musées, ruines et grande histoire. Limite : plus chère et plus intense. Idéal pour : culture profonde.\n"
             "2. Lisbonne - Forces : agréable à pied, chaleureuse et plus simple côté budget. Limite : moins de grands sites antiques. Idéal pour : culture détendue.\n\n"
-            "Recommandation\n"
+            "🎯 Recommandation\n"
             "Choisis Rome pour l'histoire iconique, ou Lisbonne pour un voyage plus simple et fluide.\n\n"
-            "Prochaine étape\n"
+            "➡️ Prochaine étape\n"
             "Tu privilégies le budget, les musées ou un rythme tranquille ?"
         )
 
     if analysis.intent == "budget_optimization":
         return (
             "Tu peux garder un voyage agréable sans trop dépenser.\n\n"
-            "Plan budget\n"
+            "✅ Plan budget\n"
             "- Économiser sur : transports publics, repas locaux simples et points de vue gratuits.\n"
             "- Ne pas trop économiser sur : localisation du logement et transport tard le soir.\n"
             "- Priorité : logement bien placé et peu d'activités payantes par jour.\n\n"
-            "Prochaine étape\n"
+            "➡️ Prochaine étape\n"
             "Donne-moi ta destination et ton budget par jour pour affiner."
         )
 
@@ -481,20 +544,23 @@ def _fallback_response_fr(analysis: MessageAnalysis) -> str:
         destination = analysis.entities.get("destination", "ta destination")
         return (
             f"C'est une bonne idée de vérifier la sécurité avant de choisir {destination}.\n\n"
-            "À vérifier\n"
+            "⚠️ Points à vérifier\n"
             "- Reste dans des zones centrales et bien notées.\n"
             "- Évite les rues isolées tard le soir et vérifie les transports locaux.\n"
             "- Consulte des sources officielles et actuelles avant de décider.\n\n"
-            "Prochaine étape\n"
+            "💡 Conseil\n"
+            "Verifie les sources officielles ou actuelles avant de decider.\n\n"
+            "➡️ Prochaine étape\n"
             "Tu voyages solo, en couple ou en famille ?"
         )
 
     return (
         "Je peux t'aider à simplifier ça.\n"
+        "✅ Pour commencer\n"
         "- Donne-moi une destination ou un style de voyage.\n"
         "- Ajoute la durée et le budget.\n"
         "- Je te prépare un plan clair.\n\n"
-        "Prochaine étape\n"
+        "➡️ Prochaine étape\n"
         "Quelle destination tu envisages ?"
     )
 
@@ -513,7 +579,7 @@ def _build_itinerary(destination: str, days: int, language: str) -> str:
             ("quartier moins touristique", "boutiques locales", "promenade de nuit dans une zone animée"),
             ("matinée libre pour refaire ton coup de coeur", "déjeuner local", "fin de journée sans te presser"),
         ]
-        lines = [intro, "", "Itinéraire proposé", ""]
+        lines = [intro, "", "✅ Itinéraire proposé", ""]
         for index in range(days):
             morning, afternoon, evening = templates[index]
             lines.extend(
@@ -527,10 +593,10 @@ def _build_itinerary(destination: str, days: int, language: str) -> str:
             )
         lines.extend(
             [
-                "Astuce budget",
+                "💡 Astuce",
                 "Marche, transports publics, snacks locaux et une seule activité payante par jour.",
                 "",
-                "Prochaine étape",
+                "➡️ Prochaine étape",
                 "Je peux te transformer ça en planning heure par heure.",
             ]
         )
@@ -546,7 +612,7 @@ def _build_itinerary(destination: str, days: int, language: str) -> str:
         ("less touristy area", "local shops", "evening walk in a lively district"),
         ("free morning for your favorite spot", "local lunch", "unhurried final evening"),
     ]
-    lines = [intro, "", "Suggested itinerary", ""]
+    lines = [intro, "", "✅ Suggested itinerary", ""]
     for index in range(days):
         morning, afternoon, evening = templates[index]
         lines.extend(
@@ -560,10 +626,10 @@ def _build_itinerary(destination: str, days: int, language: str) -> str:
         )
     lines.extend(
         [
-            "Budget tip",
+            "💡 Tip",
             "Walk, use public transport, eat local, and choose one paid attraction per day.",
             "",
-            "Next step",
+            "➡️ Next step",
             "I can turn this into an hour-by-hour plan.",
         ]
     )
@@ -609,6 +675,117 @@ def _detect_language(text: str) -> str:
     return "english"
 
 
+def _empathy_instruction_for_emotion(emotion: str, language: str) -> str:
+    if language == "french":
+        instructions = {
+            "confusion": [
+                "Commence par rassurer.",
+                "Reduis le choix a 2 ou 3 options maximum.",
+                "Utilise une structure tres claire.",
+                "Pose une seule question finale simple.",
+            ],
+            "stress": [
+                "Commence par calmer.",
+                "Donne des etapes simples.",
+                "Evite les longues explications.",
+                "Priorise une action immediate.",
+            ],
+            "worry": [
+                "Reconnais l'inquietude.",
+                "Ne garantis jamais la securite, les prix, visas ou horaires.",
+                "Recommande de verifier des sources officielles ou actuelles.",
+                "Donne des conseils prudents et pratiques.",
+            ],
+            "excitement": [
+                "Garde un ton positif et motivant.",
+                "Propose des idees inspirantes mais realistes.",
+                "Ne surcharge pas la reponse.",
+            ],
+            "frustration": [
+                "Reconnais la difficulte.",
+                "Va droit au but.",
+                "Reduis la complexite.",
+                "Propose une solution simple.",
+            ],
+            "curiosity": [
+                "Donne un peu plus d'explication.",
+                "Ajoute une suggestion interessante ou moins evidente.",
+                "Termine avec une prochaine etape.",
+            ],
+            "neutral": ["Reponds de facon claire, utile et structuree."],
+        }
+    else:
+        instructions = {
+            "confusion": [
+                "Start by reassuring.",
+                "Reduce choices to 2 or 3 options maximum.",
+                "Use very clear structure.",
+                "Ask one simple final question.",
+            ],
+            "stress": [
+                "Start by calming.",
+                "Give simple steps.",
+                "Avoid long explanations.",
+                "Prioritize one immediate action.",
+            ],
+            "worry": [
+                "Acknowledge the concern.",
+                "Never guarantee safety, prices, visas, or opening hours.",
+                "Recommend checking official/current sources.",
+                "Give careful and practical advice.",
+            ],
+            "excitement": [
+                "Use a positive motivating tone.",
+                "Give inspiring but realistic ideas.",
+                "Do not overload the response.",
+            ],
+            "frustration": [
+                "Acknowledge the difficulty.",
+                "Go straight to the point.",
+                "Reduce complexity.",
+                "Offer a simple solution.",
+            ],
+            "curiosity": [
+                "Give a bit more explanation.",
+                "Add one interesting or less obvious suggestion.",
+                "End with a next step.",
+            ],
+            "neutral": ["Be clear, useful, and structured."],
+        }
+
+    selected = instructions.get(emotion, instructions["neutral"])
+    return "\n".join(f"- {item}" for item in selected)
+
+
+def _formatting_style_instruction(language: str) -> str:
+    if language == "french":
+        items = [
+            "Utilise des titres courts.",
+            "Utilise des listes numerotees pour les options.",
+            "Utilise les emojis avec moderation pour structurer la reponse.",
+            "Emojis autorises : ✅, 🎯, ➡️, 💡, ⚠️.",
+            "Maximum 3 emojis par reponse.",
+            "Ne mets pas d'emojis dans chaque ligne.",
+            "Evite les longs paragraphes.",
+            "Une idee = une ligne courte.",
+            "Termine par une prochaine etape claire.",
+        ]
+    else:
+        items = [
+            "Use short headings.",
+            "Use numbered lists for options.",
+            "Use emojis lightly to structure the answer.",
+            "Allowed emojis: ✅, 🎯, ➡️, 💡, ⚠️.",
+            "Maximum 3 emojis per answer.",
+            "Do not put emojis on every line.",
+            "Avoid long paragraphs.",
+            "One idea = one short line.",
+            "End with a clear next step.",
+        ]
+
+    return "\n".join(f"- {item}" for item in items)
+
+
 def _critical_constraints(analysis: MessageAnalysis) -> list[str]:
     constraints = []
     entities = analysis.entities
@@ -648,7 +825,7 @@ def _output_format_for_intent(intent: str, language: str) -> str:
         formats = {
             "destination_recommendation": (
                 "[Une phrase courte et rassurante]\n\n"
-                "Mes 3 meilleures options\n\n"
+                "✅ Mes meilleures options\n\n"
                 "1. [Destination, pays]\n"
                 "Pourquoi : [raison courte]\n"
                 "Budget : [niveau budget]\n"
@@ -657,18 +834,18 @@ def _output_format_for_intent(intent: str, language: str) -> str:
                 "Pourquoi : [raison courte]\n"
                 "Budget : [niveau budget]\n"
                 "Rythme : [rythme conseillé]\n\n"
-                "3. [Destination, pays]\n"
+                "3. [Destination, pays si utile]\n"
                 "Pourquoi : [raison courte]\n"
                 "Budget : [niveau budget]\n"
                 "Rythme : [rythme conseillé]\n\n"
-                "Mon choix\n"
+                "🎯 Mon choix\n"
                 "[Recommandation courte]\n\n"
-                "Prochaine étape\n"
+                "➡️ Prochaine étape\n"
                 "[Une seule question finale]"
             ),
             "itinerary_request": (
                 "[Une phrase courte, rassurante et pratique]\n\n"
-                "Itinéraire proposé\n\n"
+                "✅ Itinéraire proposé\n\n"
                 "Jour 1\n"
                 "Matin : [activité courte]\n"
                 "Après-midi : [activité courte]\n"
@@ -677,9 +854,9 @@ def _output_format_for_intent(intent: str, language: str) -> str:
                 "Matin : [activité courte]\n"
                 "Après-midi : [activité courte]\n"
                 "Soir : [activité courte]\n\n"
-                "Astuce budget\n"
+                "💡 Astuce\n"
                 "[Conseil court]\n\n"
-                "Prochaine étape\n"
+                "➡️ Prochaine étape\n"
                 "[Étape claire]"
             ),
             "destination_comparison": (
@@ -690,7 +867,7 @@ def _output_format_for_intent(intent: str, language: str) -> str:
                 "3. [Option si utile] - Forces : [court]. Limite : [court]. Idéal pour : [court].\n\n"
                 "Recommandation\n"
                 "[Choix clair mais non imposé]\n\n"
-                "Prochaine étape\n"
+                "➡️ Prochaine étape\n"
                 "[Étape claire]"
             ),
             "budget_optimization": (
@@ -699,16 +876,19 @@ def _output_format_for_intent(intent: str, language: str) -> str:
                 "- Économiser sur : [court]\n"
                 "- Ne pas trop économiser sur : [court]\n"
                 "- Priorité : [court]\n\n"
-                "Prochaine étape\n"
+                "➡️ Prochaine étape\n"
                 "[Étape claire]"
             ),
             "safety_question": (
                 "[Phrase calme et prudente]\n\n"
-                "À vérifier\n"
+                "⚠️ Points à vérifier\n"
                 "- [Conseil pratique sans garantie]\n"
                 "- [Conseil pratique sans garantie]\n"
-                "- Vérifie les sources officielles et actuelles avant de décider.\n\n"
-                "Prochaine étape\n"
+                "- Vérifie les sources officielles ou actuelles avant de décider.\n"
+                "- [Conseil pratique prudent]\n\n"
+                "💡 Conseil\n"
+                "[Conseil court]\n\n"
+                "➡️ Prochaine étape\n"
                 "[Étape claire]"
             ),
             "general_travel_advice": (
@@ -716,7 +896,7 @@ def _output_format_for_intent(intent: str, language: str) -> str:
                 "- [Point 1]\n"
                 "- [Point 2]\n"
                 "- [Point 3 maximum]\n\n"
-                "Prochaine étape\n"
+                "➡️ Prochaine étape\n"
                 "[Étape claire]"
             ),
         }
@@ -725,7 +905,7 @@ def _output_format_for_intent(intent: str, language: str) -> str:
     formats = {
         "destination_recommendation": (
             "[One short reassuring sentence]\n\n"
-            "Best 3 options\n\n"
+            "✅ Best options\n\n"
             "1. [Destination, country]\n"
             "Why: [short reason]\n"
             "Budget: [budget level]\n"
@@ -734,18 +914,18 @@ def _output_format_for_intent(intent: str, language: str) -> str:
             "Why: [short reason]\n"
             "Budget: [budget level]\n"
             "Pace: [recommended pace]\n\n"
-            "3. [Destination, country]\n"
+            "3. [Destination, country if useful]\n"
             "Why: [short reason]\n"
             "Budget: [budget level]\n"
             "Pace: [recommended pace]\n\n"
-            "My pick\n"
+            "🎯 My pick\n"
             "[Short recommendation]\n\n"
-            "Next step\n"
+            "➡️ Next step\n"
             "[One final question only]"
         ),
         "itinerary_request": (
             "[One short practical sentence]\n\n"
-            "Suggested itinerary\n\n"
+            "✅ Suggested itinerary\n\n"
             "Day 1\n"
             "Morning: [short activity]\n"
             "Afternoon: [short activity]\n"
@@ -754,38 +934,40 @@ def _output_format_for_intent(intent: str, language: str) -> str:
             "Morning: [short activity]\n"
             "Afternoon: [short activity]\n"
             "Evening: [short activity]\n\n"
-            "Budget tip\n"
+            "💡 Tip\n"
             "[Short tip]\n\n"
-            "Next step\n"
+            "➡️ Next step\n"
             "[Clear next step]"
         ),
         "destination_comparison": (
             "[Short sentence]\n\n"
-            "Comparison\n"
+            "✅ Comparison\n"
             "1. [Option] - Strengths: [short]. Limitation: [short]. Best for: [short].\n"
             "2. [Option] - Strengths: [short]. Limitation: [short]. Best for: [short].\n"
             "3. [Option if useful] - Strengths: [short]. Limitation: [short]. Best for: [short].\n\n"
-            "Recommendation\n"
+            "🎯 Recommendation\n"
             "[Clear but non-forcing recommendation]\n\n"
-            "Next step\n"
+            "➡️ Next step\n"
             "[Clear next step]"
         ),
         "budget_optimization": (
             "[Short sentence]\n\n"
-            "Budget plan\n"
+            "✅ Budget plan\n"
             "- Save on: [short]\n"
             "- Do not over-save on: [short]\n"
             "- Priority: [short]\n\n"
-            "Next step\n"
+            "➡️ Next step\n"
             "[Clear next step]"
         ),
         "safety_question": (
             "[Calm, careful sentence]\n\n"
-            "What to check\n"
+            "⚠️ Points to check\n"
             "- [Practical advice with no guarantee]\n"
             "- [Practical advice with no guarantee]\n"
-            "- Check official and current sources before deciding.\n\n"
-            "Next step\n"
+            "- Check official/current sources before deciding.\n\n"
+            "💡 Tip\n"
+            "[Short practical tip]\n\n"
+            "➡️ Next step\n"
             "[Clear next step]"
         ),
         "general_travel_advice": (
@@ -858,7 +1040,7 @@ def _response_plan_for_intent(intent: str, language: str) -> str:
                 "- Choisis exactement 3 vraies villes ou destinations adaptées au style et au budget.\n"
                 "- Pour chaque destination, écris une ligne compacte : ville, pays, pourquoi c'est adapté, budget, rythme.\n"
                 "- Bons exemples culturels : Lisbonne, Rome, Istanbul, Marrakech, Vienne, Barcelone, Athènes.\n"
-                "- Termine par 'Mon choix :' puis 'Prochaine étape :' en une phrase courte."
+                "- Termine par '🎯 Mon choix' puis '➡️ Prochaine étape'."
             ),
             "itinerary_request": (
                 "- Commence par une phrase rassurante et pratique.\n"
@@ -907,7 +1089,7 @@ def _response_plan_for_intent(intent: str, language: str) -> str:
             "- For each destination, write one compact line with: city, country, why it fits, budget fit, and pace.\n"
             "- Good cultural examples include Lisbon, Rome, Istanbul, Marrakech, Vienna, Barcelona, and Athens.\n"
             "- Do not copy placeholder words such as Destination, Budget, or Pace as the answer.\n"
-            "- End with 'My pick:' and 'Next:' using one short sentence each.\n"
+            "- End with '🎯 My pick' and '➡️ Next step'.\n"
             "- Never answer by saying the user should first choose a destination."
         ),
         "itinerary_request": (
