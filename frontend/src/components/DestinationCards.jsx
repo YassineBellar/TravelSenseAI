@@ -42,12 +42,12 @@ const destinations = [
     prompt: "Help me plan a city discovery trip to Tokyo with cultural highlights.",
   },
   {
-    name: "Tunis",
-    description: "Mediterranean culture",
+    name: "Paris",
+    description: "French culture",
     tags: ["culture", "food", "budget"],
     image:
       "https://images.unsplash.com/photo-1549144511-f099e773c147?auto=format&fit=crop&w=900&q=80",
-    prompt: "Help me plan a Mediterranean culture trip to Tunis with a medium budget.",
+    prompt: "Help me plan a French culture trip to Paris with a medium budget.",
   },
 ];
 

@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from urllib.parse import quote_plus
 
 
 TECHNICAL_REPLACEMENTS = {
@@ -258,11 +259,11 @@ def clean_assistant_response(response: str) -> str:
     return cleaned.strip()
 
 
-def ensure_response_quality(response: str, analysis: MessageAnalysis) -> str:
+def ensure_response_quality(response: str, analysis: MessageAnalysis, rag_context: str = "") -> str:
     """Use a deterministic travel answer when the small model misses hard constraints."""
 
     if _fallback_reason(response, analysis):
-        return _fallback_response(analysis)
+        return _fallback_response(analysis, rag_context)
 
     return response
 
@@ -290,6 +291,8 @@ def _has_structure(response: str) -> bool:
         "🎯 My pick",
         "Next step",
         "➡️ Next step",
+        "Good options for now",
+        "Bonnes options pour maintenant",
         "Best 3 options",
         "✅ Best options",
         "Itinéraire proposé",
@@ -353,6 +356,10 @@ def _fallback_reason(response: str, analysis: MessageAnalysis) -> str | None:
         if _destination_ignored(response, destination):
             return "detected_destination_ignored"
 
+    if analysis.intent == "on_trip_assistance":
+        if "google.com/maps/search" not in text:
+            return "missing_map_links"
+
     if analysis.intent == "itinerary_request":
         if analysis.language == "french" and any(
             marker in text for marker in ["aéroport", "aeroport", "vol ", "vols", "paris", "retour", "voiture pour lisbonne"]
@@ -406,15 +413,356 @@ def _destination_ignored(response: str, destination: str) -> bool:
     return expected not in _normalize_destination(response)
 
 
-def _fallback_response(analysis: MessageAnalysis) -> str:
+def parse_rag_destinations(rag_context: str) -> list[dict]:
+    """Extract destination cards from the compact travel context block."""
+
+    context = (rag_context or "").strip()
+    if not context or "Destination context:" not in context:
+        return []
+
+    destinations: list[dict] = []
+    current: dict[str, str] | None = None
+    field_map = {
+        "best for": "best_for",
+        "top areas": "top_areas",
+        "budget notes": "budget_notes",
+        "safety note": "safety_note",
+        "pros": "pros",
+        "cons": "cons",
+    }
+
+    for raw_line in context.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.lower().startswith("travel guide context:"):
+            break
+        if line.lower().startswith("destination context:"):
+            continue
+        if not line.startswith("- "):
+            continue
+
+        item = line[2:].strip()
+        key_match = re.match(r"([^:]+):\s*(.*)", item)
+        if key_match:
+            field_key = field_map.get(key_match.group(1).strip().lower())
+            if field_key and current is not None:
+                current[field_key] = _clean_rag_value(key_match.group(2))
+            continue
+
+        if current:
+            destinations.append(current)
+
+        name, country = _split_destination_name(item)
+        if name:
+            current = {
+                "name": _clean_rag_value(name),
+                "country": _clean_rag_value(country),
+            }
+        else:
+            current = None
+
+    if current:
+        destinations.append(current)
+
+    return [
+        destination
+        for destination in destinations
+        if destination.get("name") and _safe_user_text(destination.get("name", ""))
+    ][:3]
+
+
+def _split_destination_name(value: str) -> tuple[str, str]:
+    parts = [part.strip() for part in value.split(",", 1)]
+    if not parts or ":" in parts[0]:
+        return "", ""
+    country = parts[1] if len(parts) > 1 else ""
+    return parts[0], country
+
+
+def _clean_rag_value(value: str) -> str:
+    cleaned = re.sub(r"\s+", " ", value or "").strip(" -")
+    return cleaned[:180]
+
+
+def _safe_user_text(value: str) -> bool:
+    blocked_terms = ["rag", "dataset", "csv", "backend", "ollama", "qwen", "model", "provider"]
+    normalized = value.lower()
+    return not any(term in normalized for term in blocked_terms)
+
+
+def build_google_maps_search_url(place: str, destination: str) -> str:
+    query = quote_plus(" ".join(part for part in [place, destination] if part).strip())
+    return f"https://www.google.com/maps/search/?api=1&query={query}"
+
+
+def build_google_maps_directions_url(place: str, destination: str, travelmode: str = "walking") -> str:
+    query = quote_plus(" ".join(part for part in [place, destination] if part).strip())
+    mode = quote_plus(travelmode or "walking")
+    return f"https://www.google.com/maps/dir/?api=1&destination={query}&travelmode={mode}"
+
+
+def _fallback_response(analysis: MessageAnalysis, rag_context: str = "") -> str:
     if analysis.language == "french":
-        return _fallback_response_fr(analysis)
+        return _fallback_response_fr(analysis, rag_context)
 
-    return _fallback_response_en(analysis)
+    return _fallback_response_en(analysis, rag_context)
 
 
-def _fallback_response_en(analysis: MessageAnalysis) -> str:
+def _rag_destination_fallback_en(destinations: list[dict]) -> str:
+    option_lines = []
+    for index, destination in enumerate(destinations[:3], start=1):
+        title = _destination_title(destination)
+        reason = _destination_reason(destination)
+        budget = _destination_budget(destination)
+        areas = _destination_areas(destination)
+        option_lines.append(
+            f"{index}. {title}\n"
+            f"Why: {reason}\n"
+            f"Budget: {budget}\n"
+            f"Good areas: {areas}"
+        )
+
+    options_text = "\n\n".join(option_lines)
+    pick = _destination_title(destinations[0])
+    pick_reason = _destination_reason(destinations[0])
+    return (
+        "No worries, here are the strongest matches I found.\n\n"
+        f"{EMOJI_OK} Best options\n\n"
+        f"{options_text}\n\n"
+        f"{EMOJI_TARGET} My pick\n"
+        f"{pick}, because {pick_reason.lower()}\n\n"
+        f"{EMOJI_ARROW} Next step\n"
+        "Tell me your trip length and budget, and I will turn this into a simple plan."
+    )
+
+
+def _rag_destination_fallback_fr(destinations: list[dict]) -> str:
+    option_lines = []
+    for index, destination in enumerate(destinations[:3], start=1):
+        title = _destination_title(destination)
+        reason = _destination_reason(destination)
+        budget = _destination_budget(destination)
+        areas = _destination_areas(destination)
+        option_lines.append(
+            f"{index}. {title}\n"
+            f"Pourquoi : {reason}\n"
+            f"Budget : {budget}\n"
+            f"Zones conseillees : {areas}"
+        )
+
+    options_text = "\n\n".join(option_lines)
+    pick = _destination_title(destinations[0])
+    pick_reason = _destination_reason(destinations[0])
+    return (
+        "Pas de panique, voici les options les plus pertinentes.\n\n"
+        f"{EMOJI_OK} Mes meilleures options\n\n"
+        f"{options_text}\n\n"
+        f"{EMOJI_TARGET} Mon choix\n"
+        f"{pick}, car {pick_reason.lower()}\n\n"
+        f"{EMOJI_ARROW} Prochaine \u00e9tape\n"
+        "Donne-moi la duree et le budget, et je te fais un plan simple."
+    )
+
+
+def _destination_title(destination: dict) -> str:
+    name = _user_facing_value(destination.get("name", "this destination"))
+    country = _user_facing_value(destination.get("country", ""))
+    return f"{name}, {country}" if country else name
+
+
+def _destination_reason(destination: dict) -> str:
+    return (
+        _user_facing_value(destination.get("best_for", ""))
+        or _user_facing_value(destination.get("pros", ""))
+        or "it fits the travel style you asked for"
+    )
+
+
+def _destination_budget(destination: dict) -> str:
+    return _user_facing_value(destination.get("budget_notes", "")) or "check current prices before booking"
+
+
+def _destination_areas(destination: dict) -> str:
+    return _user_facing_value(destination.get("top_areas", "")) or "central, well-reviewed areas"
+
+
+def _user_facing_value(value: str) -> str:
+    cleaned = _clean_rag_value(value)
+    return cleaned if cleaned and _safe_user_text(cleaned) else ""
+
+
+ON_TRIP_FALLBACK_PLACES = {
+    "lisbon": [
+        ("Alfama", "historic streets, viewpoints, and a slow local feel", "you want a classic Lisbon walk"),
+        ("Belem", "monuments, riverside space, and easy cafe breaks", "you want culture without rushing"),
+        ("LX Factory", "shops, food, and a creative atmosphere", "you want something casual and flexible"),
+    ],
+    "rome": [
+        ("Pantheon", "a central landmark with nearby piazzas and cafes", "you have limited time"),
+        ("Trastevere", "small streets, food spots, and an easy evening mood", "you want a relaxed wander"),
+        ("Villa Borghese", "green space and calmer paths", "you are tired and want something softer"),
+    ],
+    "istanbul": [
+        ("Sultanahmet", "major historic sights close together", "you want the classic first stop"),
+        ("Galata Tower", "views, cafes, and nearby streets to explore", "you want a compact visit"),
+        ("Karakoy", "food, waterfront walks, and a modern local feel", "you want something easygoing"),
+    ],
+    "paris": [
+        ("Luxembourg Gardens", "a calm central break with easy walking", "you are tired or want a slow stop"),
+        ("Le Marais", "small streets, shops, and food stops", "you want to explore without a strict plan"),
+        ("Seine near Notre-Dame", "classic views and flexible walking routes", "you have limited time"),
+    ],
+    "barcelona": [
+        ("Gothic Quarter", "historic streets and quick cultural stops", "you want a central walk"),
+        ("Park Guell", "views and Gaudi architecture", "you want a memorable outdoor visit"),
+        ("Barceloneta", "sea air, food, and a simple stroll", "you want something lighter"),
+    ],
+    "marrakech": [
+        ("Jemaa el-Fna", "a lively central square and nearby souks", "you want the classic Marrakech energy"),
+        ("Majorelle Garden", "colorful gardens and a calmer pace", "you want a softer visit"),
+        ("Bahia Palace", "architecture, courtyards, and culture", "you want one focused cultural stop"),
+    ],
+    "tunis": [
+        ("Medina of Tunis", "historic lanes, souks, and traditional architecture", "you want culture nearby"),
+        ("Sidi Bou Said", "blue-and-white streets and sea views", "you want a scenic relaxed visit"),
+        ("Carthage", "ancient ruins and coastal history", "you want a historical stop"),
+    ],
+    "tokyo": [
+        ("Asakusa", "Senso-ji, traditional streets, and food snacks", "you want culture in a compact area"),
+        ("Ueno Park", "museums, greenery, and flexible walking", "you want a calmer option"),
+        ("Shibuya Crossing", "city energy, shops, and easy transit", "you want an iconic quick stop"),
+    ],
+    "dubai": [
+        ("Dubai Marina", "waterfront walking, restaurants, and skyline views", "you want an easy evening plan"),
+        ("Al Fahidi Historical District", "heritage streets and a calmer cultural stop", "you want old Dubai"),
+        ("Dubai Mall", "indoor comfort, food, and nearby fountain views", "you need an easy practical option"),
+    ],
+    "bali": [
+        ("Ubud Monkey Forest", "nature, temples, and a compact walk", "you are near Ubud"),
+        ("Tegallalang Rice Terrace", "views and a scenic outdoor stop", "you want nature"),
+        ("Seminyak Beach", "sunset, cafes, and a relaxed pace", "you want something easy by the coast"),
+    ],
+}
+
+
+def _on_trip_suggestions(analysis: MessageAnalysis, rag_context: str) -> list[dict[str, str]]:
+    destination = analysis.entities.get("destination", "")
+    suggestions = _on_trip_suggestions_from_rag(destination, rag_context)
+    if suggestions:
+        return suggestions[:3]
+
+    key = _normalize_destination(destination)
+    places = ON_TRIP_FALLBACK_PLACES.get(key) or [
+        ("Historic center", "it is usually the easiest first area to explore", "you want a simple starting point"),
+        ("Main local market", "it gives food, local atmosphere, and flexible timing", "you want a low-pressure stop"),
+        ("Central park or waterfront", "it is calmer and easier when you are tired", "you want something gentle"),
+    ]
+    return [
+        {"place": place, "why": why, "best_if": best_if}
+        for place, why, best_if in places[:3]
+    ]
+
+
+def _on_trip_suggestions_from_rag(destination: str, rag_context: str) -> list[dict[str, str]]:
+    if not destination:
+        return []
+
+    parsed_destinations = parse_rag_destinations(rag_context)
+    if not parsed_destinations:
+        return []
+
+    destination_key = _normalize_destination(destination)
+    selected = next(
+        (
+            item
+            for item in parsed_destinations
+            if _normalize_destination(item.get("name", "")) == destination_key
+        ),
+        parsed_destinations[0],
+    )
+    areas = _split_compact_items(selected.get("top_areas", ""))
+    best_for = _user_facing_value(selected.get("best_for", ""))
+    return [
+        {
+            "place": area,
+            "why": best_for or "it matches the local travel context for this destination",
+            "best_if": "you want a nearby area to open and check in Google Maps",
+        }
+        for area in areas[:3]
+        if area
+    ]
+
+
+def _split_compact_items(value: str) -> list[str]:
+    return [
+        item.strip()
+        for item in re.split(r"[,;]", value or "")
+        if item.strip() and _safe_user_text(item)
+    ]
+
+
+def _on_trip_fallback_en(analysis: MessageAnalysis, rag_context: str = "") -> str:
+    destination = analysis.entities.get("destination", "your area")
+    suggestions = _on_trip_suggestions(analysis, rag_context)
+    option_lines = []
+    for index, suggestion in enumerate(suggestions[:3], start=1):
+        place = suggestion["place"]
+        option_lines.append(
+            f"{index}. {place}\n"
+            f"Why: {suggestion['why']}\n"
+            f"Best if: {suggestion['best_if']}\n"
+            f"Map: {build_google_maps_search_url(place, destination)}"
+        )
+
+    pick = suggestions[0]["place"] if suggestions else destination
+    options_text = "\n\n".join(option_lines)
+    return (
+        f"You can keep this simple from {destination}: choose one nearby area and check the route first.\n\n"
+        f"{EMOJI_OK} Good options for now\n\n"
+        f"{options_text}\n\n"
+        f"{EMOJI_TARGET} My pick\n"
+        f"{pick}, because it is a practical first stop without needing a full itinerary.\n\n"
+        f"{EMOJI_ARROW} Next step\n"
+        "Open this in Google Maps to check exact route and timing."
+    )
+
+
+def _on_trip_fallback_fr(analysis: MessageAnalysis, rag_context: str = "") -> str:
+    destination = analysis.entities.get("destination", "ta zone")
+    suggestions = _on_trip_suggestions(analysis, rag_context)
+    option_lines = []
+    for index, suggestion in enumerate(suggestions[:3], start=1):
+        place = suggestion["place"]
+        option_lines.append(
+            f"{index}. {place}\n"
+            f"Pourquoi : {suggestion['why']}\n"
+            f"Idéal si : {suggestion['best_if']}\n"
+            f"Carte : {build_google_maps_search_url(place, destination)}"
+        )
+
+    pick = suggestions[0]["place"] if suggestions else destination
+    options_text = "\n\n".join(option_lines)
+    return (
+        f"On peut faire simple depuis {destination} : choisis une zone proche et verifie le trajet avant de partir.\n\n"
+        f"{EMOJI_OK} Bonnes options pour maintenant\n\n"
+        f"{options_text}\n\n"
+        f"{EMOJI_TARGET} Mon choix\n"
+        f"{pick}, car c'est un premier arret pratique sans construire tout un itineraire.\n\n"
+        f"{EMOJI_ARROW} Prochaine étape\n"
+        "Ouvre la carte dans Google Maps pour verifier le trajet exact et le temps."
+    )
+
+
+def _fallback_response_en(analysis: MessageAnalysis, rag_context: str = "") -> str:
+    if analysis.intent == "on_trip_assistance":
+        return _on_trip_fallback_en(analysis, rag_context)
+
     if analysis.intent == "destination_recommendation":
+        rag_destinations = parse_rag_destinations(rag_context)
+        if rag_destinations:
+            return _rag_destination_fallback_en(rag_destinations)
+
         return (
             "No worries, we can narrow this down clearly.\n\n"
             "✅ Best options\n\n"
@@ -489,8 +837,15 @@ def _fallback_response_en(analysis: MessageAnalysis) -> str:
     )
 
 
-def _fallback_response_fr(analysis: MessageAnalysis) -> str:
+def _fallback_response_fr(analysis: MessageAnalysis, rag_context: str = "") -> str:
+    if analysis.intent == "on_trip_assistance":
+        return _on_trip_fallback_fr(analysis, rag_context)
+
     if analysis.intent == "destination_recommendation":
+        rag_destinations = parse_rag_destinations(rag_context)
+        if rag_destinations:
+            return _rag_destination_fallback_fr(rag_destinations)
+
         return (
             "Pas de panique, on va réduire le choix à 3 options claires.\n\n"
             "✅ Mes meilleures options\n\n"
@@ -891,6 +1246,22 @@ def _output_format_for_intent(intent: str, language: str) -> str:
                 "➡️ Prochaine étape\n"
                 "[Étape claire]"
             ),
+            "on_trip_assistance": (
+                "[Phrase courte et pratique]\n\n"
+                "✅ Bonnes options pour maintenant\n\n"
+                "1. [Lieu ou zone]\n"
+                "Pourquoi : [raison courte]\n"
+                "Idéal si : [cas d'usage]\n"
+                "Carte : [lien Google Maps search]\n\n"
+                "2. [Lieu ou zone]\n"
+                "Pourquoi : [raison courte]\n"
+                "Idéal si : [cas d'usage]\n"
+                "Carte : [lien Google Maps search]\n\n"
+                "🎯 Mon choix\n"
+                "[Recommandation courte]\n\n"
+                "➡️ Prochaine étape\n"
+                "Ouvre Google Maps pour vérifier le trajet exact et le temps."
+            ),
             "general_travel_advice": (
                 "[Réponse directe]\n"
                 "- [Point 1]\n"
@@ -970,6 +1341,22 @@ def _output_format_for_intent(intent: str, language: str) -> str:
             "➡️ Next step\n"
             "[Clear next step]"
         ),
+        "on_trip_assistance": (
+            "[Short reassuring sentence]\n\n"
+            "✅ Good options for now\n\n"
+            "1. [Place or area]\n"
+            "Why: [short reason]\n"
+            "Best if: [use case]\n"
+            "Map: [Google Maps search link]\n\n"
+            "2. [Place or area]\n"
+            "Why: [short reason]\n"
+            "Best if: [use case]\n"
+            "Map: [Google Maps search link]\n\n"
+            "🎯 My pick\n"
+            "[Short recommendation]\n\n"
+            "➡️ Next step\n"
+            "Open this in Google Maps to check exact route and timing."
+        ),
         "general_travel_advice": (
             "[Direct answer]\n"
             "- [Point 1]\n"
@@ -1033,6 +1420,23 @@ def _few_shot_example_for_intent(intent: str, language: str) -> str:
 
 
 def _response_plan_for_intent(intent: str, language: str) -> str:
+    if intent == "on_trip_assistance":
+        if language == "french":
+            return (
+                "- Reponds comme une aide sur place, pas comme un planning complet.\n"
+                "- Propose 2 ou 3 lieux ou zones maximum dans la destination detectee.\n"
+                "- Ajoute une ligne Carte avec un lien Google Maps search pour chaque option.\n"
+                "- Ne promets pas de distance, horaires, trafic ou securite en temps reel.\n"
+                "- Termine par une prochaine etape simple dans Google Maps."
+            )
+        return (
+            "- Answer like an on-trip companion, not a full trip planner.\n"
+            "- Suggest 2 or 3 places or areas maximum in the detected destination.\n"
+            "- Add a Map line with a Google Maps search link for each option.\n"
+            "- Do not promise live distance, opening hours, traffic, or real-time safety.\n"
+            "- End with a simple next step in Google Maps."
+        )
+
     if language == "french":
         plans = {
             "destination_recommendation": (
@@ -1150,7 +1554,56 @@ def _detect_emotion(text: str) -> str:
     return "neutral"
 
 
+def _is_on_trip_assistance(text: str, entities: dict[str, str]) -> bool:
+    on_trip_markers = [
+        "i am currently in",
+        "i'm currently in",
+        "im currently in",
+        "i am in",
+        "i'm in",
+        "im in",
+        "near me",
+        "nearby",
+        "around me",
+        "what should i visit",
+        "what can i do",
+        "what can i do now",
+        "right now",
+        "i have 1 hour",
+        "i have 2 hours",
+        "i have 3 hours",
+        "i have 4 hours",
+        "i have 5 hours",
+        "je suis actuellement",
+        "je suis a",
+        "je suis \u00e0",
+        "autour de moi",
+        "pres de moi",
+        "pr\u00e8s de moi",
+        "que visiter",
+        "que faire maintenant",
+        "j'ai 1 heure",
+        "j'ai 2 heures",
+        "j'ai 3 heures",
+        "j\u2019ai 1 heure",
+        "j\u2019ai 2 heures",
+        "j\u2019ai 3 heures",
+    ]
+    if any(marker in text for marker in on_trip_markers):
+        return True
+
+    if "destination" in entities and "duration" in entities and any(
+        marker in text for marker in ["hour", "hours", "heure", "heures"]
+    ):
+        return True
+
+    return False
+
+
 def _detect_intent(text: str, entities: dict[str, str]) -> str:
+    if _is_on_trip_assistance(text, entities):
+        return "on_trip_assistance"
+
     if any(keyword in text for keyword in ["compare", "comparison", "versus", "vs", "better", "which one", "comparer"]):
         return "destination_comparison"
 
@@ -1197,6 +1650,8 @@ def _detect_intent(text: str, entities: dict[str, str]) -> str:
 
 def _extract_duration(message: str) -> str:
     patterns = [
+        r"\b(?:i\s+have|j'ai|j’ai)\s+(\d{1,2})\s*(hour|hours|heure|heures|h)\b",
+        r"\b(\d{1,2})\s*[- ]?\s*(hour|hours|heure|heures|h)\b",
         r"\b(\d{1,2})\s*[- ]?\s*(day|days|jour|jours|j)\b",
         r"\b(\d{1,2})\s*[- ]?\s*(week|weeks|semaine|semaines)\b",
         r"\b(for|pendant)\s+(\d{1,2})\s*(day|days|jour|jours|week|weeks|semaine|semaines)\b",
@@ -1268,13 +1723,15 @@ def _extract_destinations(message: str) -> list[str]:
         "cultural",
     }
     patterns = [
+        r"\b(?:i\s+am|i'm|im)\s+(?:currently\s+)?in\s+([A-ZÀ-Ý][\wÀ-ÿ'-]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'-]+){0,2})",
+        r"\bje\s+suis\s+(?:actuellement\s+)?(?:à|a)\s+([A-ZÀ-Ý][\wÀ-ÿ'-]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'-]+){0,2})",
         r"\b(?:to|in|for|dans|à|a|pour)\s+([A-ZÀ-Ý][\wÀ-ÿ'-]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'-]+){0,2})",
     ]
 
     for pattern in patterns:
         match = re.search(pattern, message)
         if match:
-            candidate = match.group(1).strip()
+            candidate = _clean_destination_candidate(match.group(1))
             if candidate.lower() not in generic_words:
                 found.append(candidate)
 
@@ -1287,6 +1744,17 @@ def _extract_destinations(message: str) -> list[str]:
             deduped.append(destination)
 
     return deduped
+
+
+def _clean_destination_candidate(candidate: str) -> str:
+    cleaned = (candidate or "").strip()
+    cleaned = re.sub(
+        r"\s+(right now|now|today|currently|near me|around me)$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned.strip(" .,!?;:")
 
 
 def _normalize_destination(value: str) -> str:
@@ -1369,6 +1837,7 @@ def _detect_missing_context(intent: str, entities: dict[str, str]) -> list[str]:
         "itinerary_request",
         "activity_search",
         "safety_question",
+        "on_trip_assistance",
     }:
         missing.append("destination")
 

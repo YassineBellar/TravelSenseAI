@@ -135,18 +135,19 @@ function HeroApp({
 
         <div className="min-h-0 flex-1 pt-4 md:pt-5">
           {hasStartedChat ? (
-            <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:grid-rows-1">
-              <details className="rounded-[1.4rem] border border-white/[0.10] bg-navy/[0.28] p-3 text-left backdrop-blur-xl lg:hidden">
-                <summary className="cursor-pointer text-sm font-extrabold text-mist">
+            <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3 lg:grid-cols-[248px_minmax(0,1fr)] lg:grid-rows-1">
+              <details className="rounded-2xl border border-white/[0.08] bg-navy/[0.24] px-3 py-2 text-left backdrop-blur-xl lg:hidden">
+                <summary className="cursor-pointer text-xs font-extrabold uppercase tracking-normal text-mist">
                   Saved chats
                 </summary>
-                <div className="mt-3 max-h-56">
+                <div className="mt-2 max-h-64 overflow-hidden">
                   <ChatHistory
                     conversations={conversations}
                     activeConversationId={activeConversationId}
                     onSelectConversation={onSelectConversation}
                     onNewChat={onNewChat}
                     disabled={isLoading}
+                    variant="mobile"
                   />
                 </div>
               </details>
@@ -168,22 +169,19 @@ function HeroApp({
               />
             </div>
           ) : (
-            <div className="flex h-full min-h-0 items-center justify-center pb-6">
-              <div className="mx-auto flex w-full max-w-4xl flex-col items-center text-center">
+            <div className="flex h-full min-h-0 items-start justify-center pt-8 pb-5 md:pt-11">
+              <div className="mx-auto flex w-full max-w-5xl flex-col items-center text-center">
                 <div className="transition-all duration-500 animate-fade-up">
-                  <p className="mx-auto w-fit rounded-full border border-white/[0.12] bg-white/[0.06] px-4 py-2 text-xs font-extrabold uppercase tracking-normal text-mist backdrop-blur-md">
-                    AI Travel Companion
-                  </p>
-                  <h1 className="mt-7 text-4xl font-extrabold leading-tight tracking-normal text-white md:text-6xl">
+                  <h1 className="text-4xl font-extrabold leading-tight tracking-normal text-white md:text-[3.35rem]">
                     Hello! I’m your AI travel companion.
                   </h1>
-                  <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-white/[0.76] md:text-lg">
+                  <p className="mx-auto mt-3 max-w-2xl text-base leading-7 text-white/[0.76] md:text-lg">
                     Tell me your budget, mood, destination idea or travel style, and I’ll help you
                     plan your next trip.
                   </p>
                 </div>
 
-                <div className="mt-8 flex max-w-3xl flex-wrap justify-center gap-2 animate-fade-up-delay">
+                <div className="mt-7 flex max-w-3xl flex-wrap justify-center gap-2 animate-fade-up-delay">
                   {suggestions.map((suggestion) => (
                     <button
                       className="rounded-full border border-white/[0.12] bg-white/[0.06] px-4 py-2.5 text-sm font-bold text-white/[0.84] backdrop-blur-md transition duration-200 hover:-translate-y-0.5 hover:bg-mist hover:text-navy disabled:opacity-60"
@@ -197,7 +195,7 @@ function HeroApp({
                   ))}
                 </div>
 
-                <div className="mt-8 w-full animate-fade-up-late">
+                <div className="mt-7 w-full animate-fade-up-late">
                   <ChatPanel
                     messages={messages}
                     isLoading={isLoading}
@@ -208,20 +206,16 @@ function HeroApp({
                 </div>
 
                 {hasSavedChats ? (
-                  <details className="mt-4 w-full max-w-4xl rounded-[1.4rem] border border-white/[0.10] bg-navy/[0.28] p-3 text-left backdrop-blur-xl">
-                    <summary className="cursor-pointer text-sm font-extrabold text-mist">
-                      Saved chats
-                    </summary>
-                    <div className="mt-3 max-h-72">
-                      <ChatHistory
-                        conversations={conversations}
-                        activeConversationId={activeConversationId}
-                        onSelectConversation={onSelectConversation}
-                        onNewChat={onNewChat}
-                        disabled={isLoading}
-                      />
-                    </div>
-                  </details>
+                  <div className="mt-4 w-full animate-fade-up-late">
+                    <ChatHistory
+                      conversations={conversations}
+                      activeConversationId={activeConversationId}
+                      onSelectConversation={onSelectConversation}
+                      onNewChat={onNewChat}
+                      disabled={isLoading}
+                      variant="home"
+                    />
+                  </div>
                 ) : null}
               </div>
             </div>

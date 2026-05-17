@@ -173,7 +173,7 @@ def chat(request: ChatRequest) -> ChatResponse:
             print("[TravelSense DEBUG] fallback_triggered:", fallback_reason is not None)
             print("[TravelSense DEBUG] fallback_reason:", fallback_reason)
 
-        assistant_response = ensure_response_quality(assistant_response, analysis)
+        assistant_response = ensure_response_quality(assistant_response, analysis, rag_context)
     except OllamaClientError as exc:
         log_timing("Ollama error")
         if DEBUG_LOGS:

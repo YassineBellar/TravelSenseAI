@@ -38,7 +38,7 @@ function ChatPanel({ messages, isLoading, error, onSendMessage, hasStartedChat }
   return (
     <div
       className={`mx-auto grid w-full transition-all duration-500 ${
-        hasStartedChat ? "h-full min-h-0 max-w-5xl grid-rows-[minmax(0,1fr)_auto]" : "max-w-4xl"
+        hasStartedChat ? "h-full min-h-0 max-w-5xl grid-rows-[minmax(0,1fr)_auto]" : "max-w-5xl"
       }`}
     >
       {hasStartedChat ? (
@@ -94,7 +94,7 @@ function ChatPanel({ messages, isLoading, error, onSendMessage, hasStartedChat }
           </button>
           <textarea
             className={`flex-1 resize-none bg-transparent py-2 text-base text-white outline-none placeholder:text-white/[0.50] transition-all duration-300 ${
-              hasStartedChat ? "min-h-16" : "min-h-28"
+              hasStartedChat ? "min-h-16" : "min-h-20"
             }`}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
@@ -102,7 +102,7 @@ function ChatPanel({ messages, isLoading, error, onSendMessage, hasStartedChat }
             placeholder="Ask TravelSense AI anything..."
             disabled={isLoading}
           />
-          <div className={hasStartedChat ? "flex flex-none gap-2" : "flex flex-none flex-col gap-2"}>
+          <div className="flex flex-none gap-2">
             <button
               className="grid h-11 w-11 place-items-center rounded-full bg-white/[0.07] text-white transition hover:bg-white/[0.12]"
               type="button"

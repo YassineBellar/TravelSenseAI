@@ -22,64 +22,80 @@ function ChatHistory({
   onSelectConversation,
   onNewChat,
   disabled,
+  variant = "sidebar",
+  limit,
 }) {
   const sortedConversations = conversations
     .filter((conversation) => conversation.messages.length > 0)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const visibleConversations = limit ? sortedConversations.slice(0, limit) : sortedConversations;
+  const isHome = variant === "home";
 
   return (
-    <aside className="flex min-h-0 flex-col rounded-[1.4rem] border border-white/[0.10] bg-navy/[0.34] p-3 text-left backdrop-blur-xl">
+    <aside
+      className={`flex min-h-0 flex-col text-left backdrop-blur-xl ${
+        isHome
+          ? "mx-auto w-full max-w-5xl rounded-2xl border border-white/[0.08] bg-navy/[0.22] px-3 py-2"
+          : "h-full rounded-2xl border border-white/[0.08] bg-navy/[0.28] p-3"
+      }`}
+    >
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-extrabold uppercase tracking-normal text-mist">
-            Saved chats
+            {isHome ? "Recent trips" : "Saved chats"}
           </p>
-          <p className="mt-1 text-sm font-semibold text-white/[0.58]">Recent trips</p>
+          {!isHome ? (
+            <p className="mt-0.5 text-xs font-semibold text-white/[0.52]">Recent trips</p>
+          ) : null}
         </div>
         <button
-          className="inline-flex h-10 items-center gap-2 rounded-full bg-mist px-3 text-sm font-extrabold text-navy transition hover:-translate-y-0.5 hover:bg-snow disabled:opacity-60"
+          className="inline-flex h-8 items-center gap-1.5 rounded-full bg-mist px-2.5 text-xs font-extrabold text-navy transition hover:-translate-y-0.5 hover:bg-snow disabled:opacity-60"
           type="button"
           onClick={onNewChat}
           disabled={disabled}
         >
-          <Plus size={16} />
+          <Plus size={14} />
           New
         </button>
       </div>
 
-      <div className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-        {sortedConversations.length ? (
-          sortedConversations.map((conversation) => {
+      <div
+        className={`mt-2 flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-1 ${
+          isHome ? "max-h-[10.5rem]" : ""
+        }`}
+      >
+        {visibleConversations.length ? (
+          visibleConversations.map((conversation) => {
             const isActive = conversation.id === activeConversationId;
 
             return (
               <button
-                className={`w-full rounded-2xl border px-3 py-3 text-left transition duration-200 ${
+                className={`grid w-full grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition duration-200 ${
                   isActive
-                    ? "border-mist/40 bg-mist/[0.18] text-white"
-                    : "border-white/[0.08] bg-white/[0.05] text-white/[0.72] hover:bg-white/[0.10]"
+                    ? "border-mist/35 bg-mist/[0.16] text-white"
+                    : "border-white/[0.08] bg-white/[0.05] text-white/[0.74] hover:border-white/[0.14] hover:bg-white/[0.09]"
                 }`}
                 key={conversation.id}
                 type="button"
                 onClick={() => onSelectConversation(conversation.id)}
                 disabled={disabled}
               >
-                <div className="flex items-start gap-2">
-                  <MessageCircle className="mt-0.5 flex-none text-mist" size={16} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-extrabold">{conversation.title}</p>
-                    <p className="mt-1 text-xs font-semibold text-white/[0.46]">
-                      {conversation.messages.length
-                        ? formatChatDate(conversation.updatedAt)
-                        : "No messages yet"}
-                    </p>
-                  </div>
+                <MessageCircle className="text-mist" size={15} />
+                <div className="min-w-0">
+                  <p className="truncate text-[0.82rem] font-semibold leading-5">
+                    {conversation.title}
+                  </p>
+                  <p className="truncate text-[0.72rem] font-semibold leading-4 text-white/[0.48]">
+                    {conversation.messages.length
+                      ? formatChatDate(conversation.updatedAt)
+                      : "No messages yet"}
+                  </p>
                 </div>
               </button>
             );
           })
         ) : (
-          <p className="rounded-2xl border border-white/[0.08] bg-white/[0.05] px-3 py-4 text-sm font-semibold text-white/[0.54]">
+          <p className="rounded-xl border border-white/[0.08] bg-white/[0.04] px-2.5 py-2 text-xs font-semibold text-white/[0.48]">
             No saved trips yet
           </p>
         )}
