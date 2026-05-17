@@ -4,31 +4,6 @@ TravelSense AI is an AI travel companion web app. It helps users plan, compare, 
 
 The app uses a local FastAPI backend with Ollama and a React + Vite frontend. There is no paid API and no Streamlit app.
 
-## Development Status
-
-Currently implemented:
-
-- FastAPI backend with `POST /chat`
-- Local Ollama client using `qwen2.5:0.5b`
-- React + Vite frontend
-- Premium travel-tech chat-first UI
-- Scenic hero background
-- Pre-chat and active-chat states
-- Suggestion prompts
-- New Chat button
-- Saved chats/history with `localStorage`
-- Internal message scrolling so long chats do not expand the page
-- Destinations, How it works, Reviews, Mobile app promo, and Footer sections
-
-Next tasks:
-
-- Add rename/delete actions for saved chats
-- Improve mobile saved-chat drawer behavior
-- Add itinerary preview and copy-response actions
-- Add visual QA screenshots for desktop/mobile
-- Prepare a presentation-ready demo flow
-
-For full handoff context, see [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md).
 
 ## Requirements
 
